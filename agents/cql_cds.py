@@ -34,32 +34,73 @@ class Actor(nn.Module):
         dist = utils.SquashedNormal2(mu, std)
         return dist
 
+class C51Q_network(nn.Module):
+    def __init__(self, obs_dim, action_dim, hidden_dim, atom_size, support, device = 'cuda'):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(obs_dim + action_dim, hidden_dim), nn.LayerNorm(hidden_dim), nn.Tanh(),
+            nn.Linear(hidden_dim, hidden_dim), nn.LayerNorm(hidden_dim), nn.LeakyReLU(),
+            nn.Linear(hidden_dim, hidden_dim), nn.LeakyReLU(),
+            nn.Linear(hidden_dim, 1 * atom_size)).to(device)
+        self.support = support.to(device)
+        self.atom_size = atom_size
+    
+    def forward(self, x):
+        dist = self.dist(x)
+        q = (dist * self.support).sum(-1)
+        return q
+    
+    def dist(self, x):
+        q_atoms = self.net(x).view(-1, 1, self.atom_size)
+        dist = F.softmax(q_atoms, dim=-1)
+        dist = dist.clamp(min=float(1e-3))  # 避免 nan
+        return dist
+    
+    def dist2q(self, dist):
+        return (dist * self.support).sum(-1)
 
 class Critic(nn.Module):
-    def __init__(self, obs_dim, action_dim, hidden_dim, init_w=1e-3):
+    def __init__(self, obs_dim, action_dim, hidden_dim, atom_dim = 51, v_min = -100., v_max = 100. ,init_w=1e-3, device = 'cuda'):
         super().__init__()
-
-        self.q1_net = nn.Sequential(
-            nn.Linear(obs_dim + action_dim, hidden_dim), nn.LayerNorm(hidden_dim), nn.Tanh(),
-            nn.Linear(hidden_dim, hidden_dim), nn.LayerNorm(hidden_dim), nn.LeakyReLU(),
-            nn.Linear(hidden_dim, hidden_dim), nn.LeakyReLU())
-        self.q1_last = nn.Linear(hidden_dim, 1)
-
-        self.q2_net = nn.Sequential(
-            nn.Linear(obs_dim + action_dim, hidden_dim), nn.LayerNorm(hidden_dim), nn.Tanh(),
-            nn.Linear(hidden_dim, hidden_dim), nn.LayerNorm(hidden_dim), nn.LeakyReLU(),
-            nn.Linear(hidden_dim, hidden_dim), nn.LeakyReLU())
-        self.q2_last = nn.Linear(hidden_dim, 1)
-
+        self.device = device
+        self.atom_dim= atom_dim
+        self.support = torch.linspace(v_min, v_max, atom_dim).to(device)
+        self.delta_z = (v_max - v_min) / (atom_dim - 1)
+        self.v_min = v_min
+        self.v_max = v_max
+        self.q1 = C51Q_network(obs_dim, action_dim, hidden_dim, atom_dim, self.support)
+        self.q2 = C51Q_network(obs_dim, action_dim, hidden_dim, atom_dim, self.support)
+        
     def forward(self, obs, action):
         obs_action = torch.cat([obs, action], dim=-1)
-        q1 = self.q1_net(obs_action)
-        q1 = self.q1_last(q1)
+        Q1 = self.q1(obs_action)
+        Q2 = self.q2(obs_action)
+        return Q1, Q2
+    
+    def dist(self, obs, action):
+        obs_action = torch.cat([obs, action], dim=-1)
+        Q1_dist = self.q1.dist(obs_action)
+        Q2_dist = self.q2.dist(obs_action)
+        return Q1_dist, Q2_dist
 
-        q2 = self.q2_net(obs_action)
-        q2 = self.q2_last(q2)
+    def dist2q(self, Q1_dist, Q2_dist):
+        return self.q1.dist2q(Q1_dist), self.q2.dist2q(Q2_dist)
+    
+    def dist_projection(self, optimal_dist, rewards, gamma):
+        batch_size = rewards.shape[0]
+        m = torch.zeros(batch_size, self.atom_dim).to(self.device)
+        Tz = rewards.repeat(1, self.atom_dim) + gamma * self.support # [batch_size, self.atom_dim]
+        Tz = torch.clamp(Tz, self.v_min, self.v_max).to(self.device)
+        b = ((Tz - self.v_min) / self.delta_z).to(self.device)
+        
+        l = torch.floor(b).long().to(self.device) - 1 # [batch_size, self.atom_dim]
+        u = torch.ceil(b).long().to(self.device) # [batch_size, self.atom_dim]
+        idx = torch.arange(batch_size).repeat(self.atom_dim, 1).t().to(self.device)
+        m[idx, l] += optimal_dist * (u - b)
+        m[idx, u] += optimal_dist * (b - l)
 
-        return q1, q2
+        #print(m)
+        return m / m.sum(-1).unsqueeze(-1)
 
 
 class CDSAgent(Agent):
@@ -162,13 +203,23 @@ class CDSAgent(Agent):
             dist = self.actor(next_obs)                 # SquashedNormal分布
             sampled_next_action = dist.sample()         # (1024, act_dim)
             # print("sampled_next_action:", sampled_next_action.shape)
-            target_Q1, target_Q2 = self.critic_target(next_obs, sampled_next_action)  # (1024,1), (1024,1)
-            target_V = torch.min(target_Q1, target_Q2)  # (1024,1)
-            target_Q = reward + (discount * target_V)   # (1024,1)
+            target_Q1_dist, target_Q2_dist = self.critic_target.dist(next_obs, sampled_next_action)  # (1024,1), (1024,1)
+            target_Q1, target_Q2 = self.critic_target.dist2q(target_Q1_dist, target_Q2_dist)
+              # (1024,1)
+            index = torch.cat([target_Q1, target_Q2], dim=-1).argmin(-1)
+            batch = torch.arange(index.shape[0])
+            target_dist = torch.cat([target_Q1_dist, target_Q2_dist], dim=1)
+            target_dist = target_dist[batch, index]
+            target_dist = self.critic.dist_projection(target_dist, reward, discount)
+            target_Q = reward + (discount * torch.min(target_Q1, target_Q2))   # (1024,1)
+            
 
-        Q1, Q2 = self.critic(obs, action)
-        critic_loss = F.mse_loss(Q1, target_Q) + F.mse_loss(Q2, target_Q)   # 标量
-
+        
+        Q1_dist, Q2_dist = self.critic.dist(obs, action)
+        Q1, Q2 = self.critic.dist2q(Q1_dist, Q2_dist)
+        # critic_loss = F.mse_loss(Q1, target_Q) + F.mse_loss(Q2, target_Q)   # 标量
+        critic_loss = F.cross_entropy(Q1_dist.squeeze(1), target_dist) + \
+                        F.cross_entropy(Q2_dist.squeeze(1), target_dist)
         # Add CQL penalty
         with torch.no_grad():
             random_actions = torch.FloatTensor(self.n_samples, Q1.shape[0],
