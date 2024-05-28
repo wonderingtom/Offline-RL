@@ -60,7 +60,7 @@ class C51Q_network(nn.Module):
         return (dist * self.support).sum(-1)
 
 class Critic(nn.Module):
-    def __init__(self, obs_dim, action_dim, hidden_dim, atom_dim = 51, v_min = -100., v_max = 100. ,init_w=1e-3, device = 'cuda'):
+    def __init__(self, obs_dim, action_dim, hidden_dim, atom_dim = 51, v_min = -50., v_max = 50. ,init_w=1e-3, device = 'cuda'):
         super().__init__()
         self.device = device
         self.atom_dim= atom_dim
@@ -92,8 +92,8 @@ class Critic(nn.Module):
         Tz = rewards.repeat(1, self.atom_dim) + gamma * self.support # [batch_size, self.atom_dim]
         Tz = torch.clamp(Tz, self.v_min, self.v_max).to(self.device)
         b = ((Tz - self.v_min) / self.delta_z).to(self.device)
-        
-        l = torch.floor(b).long().to(self.device) - 1 # [batch_size, self.atom_dim]
+        b -= 1e-4
+        l = torch.floor(b).long().to(self.device) # [batch_size, self.atom_dim]
         u = torch.ceil(b).long().to(self.device) # [batch_size, self.atom_dim]
         idx = torch.arange(batch_size).repeat(self.atom_dim, 1).t().to(self.device)
         m[idx, l] += optimal_dist * (u - b)
@@ -211,7 +211,7 @@ class CDSAgent(Agent):
             target_dist = torch.cat([target_Q1_dist, target_Q2_dist], dim=1)
             target_dist = target_dist[batch, index]
             target_dist = self.critic.dist_projection(target_dist, reward, discount)
-            target_Q = reward + (discount * torch.min(target_Q1, target_Q2))   # (1024,1)
+            target_Q = reward + (discount * self.critic.q1.dist2q(target_dist))   # (1024,1)
             
 
         
