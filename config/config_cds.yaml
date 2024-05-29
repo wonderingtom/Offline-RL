@@ -22,7 +22,7 @@ replay_buffer_size: 10000000        # max: 10M
 replay_buffer_num_workers: 1  # 4
 batch_size: ${agent.batch_size}
 # misc
-seed: ~
+seed: 42
 device: cuda
 save_video: False
 use_tb: True

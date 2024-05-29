@@ -10,6 +10,14 @@ import utils
 from dm_control.utils import rewards
 from agents.agent_example import Agent, load_data
 
+def l2_projection(constraint):
+    @torch.no_grad()
+    def fn(module):
+        if hasattr(module, 'weight') and constraint>0:
+            w = module.weight
+            norm = torch.norm(w)
+            w.mul_(torch.clip(constraint/norm, max=1))
+    return fn
 
 class Actor(nn.Module):
     def __init__(self, obs_dim, action_dim, hidden_dim, init_w=1e-3):
@@ -273,6 +281,8 @@ class CDSAgent(Agent):
         critic_loss.backward()
         critic_grad_norm = utils.grad_norm(self.critic.parameters())
         self.critic_opt.step()
+        norm_constraint = 100
+        self.critic.apply(l2_projection(norm_constraint))
 
         if self.use_tb:
             metrics['critic_target_q'] = target_Q.mean().item()
