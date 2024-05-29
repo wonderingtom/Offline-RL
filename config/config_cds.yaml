@@ -24,7 +24,7 @@ batch_size: ${agent.batch_size}
 # misc
 seed: 42
 device: cuda
-save_video: False
+save_video: True
 use_tb: True
 
 # used for train_offline_single
