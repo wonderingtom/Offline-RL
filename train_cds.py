@@ -38,22 +38,22 @@ def get_data_seed(seed, num_data_seeds):
     return (seed - 1) % num_data_seeds + 1
 
 
-def eval(global_step, agent, env, logger, num_eval_episodes, video_recorder):
+def eval(global_step, agent, env, logger, num_eval_episodes, video_recorder=None):
     step, episode, total_reward = 0, 0, 0
     eval_until_episode = utils.Until(num_eval_episodes)
     while eval_until_episode(episode):
         time_step = env.reset()
-        video_recorder.init(env, enabled=(episode == 0))
+        # video_recorder.init(env, enabled=(episode == 0))
         while not time_step.last():
             with torch.no_grad(), utils.eval_mode(agent):
                 action = agent.act(time_step.observation, step=global_step, eval_mode=True)
             time_step = env.step(action)
-            video_recorder.record(env)
+            # video_recorder.record(env)
             total_reward += time_step.reward
             step += 1
 
         episode += 1
-        video_recorder.save(f'{global_step}.mp4')
+        # video_recorder.save(f'{global_step}.mp4')
 
     episode_reward = total_reward / episode
     with logger.log_and_dump_ctx(global_step, ty='eval') as log:
@@ -110,14 +110,18 @@ def main(cfg: DictConfig):
     replay_iter_main = iter(replay_loader_main)      # run OfflineReplayBuffer.sample function
 
     print("CDS.  load share dataset..", share_tasks)
-    replay_loader_share = make_replay_loader(env, replay_dir_list_share, cfg.replay_buffer_size,
-                cfg.batch_size // 2 * 10, cfg.replay_buffer_num_workers, cfg.discount,  # batch size是10倍，后取top10
-                main_task=cfg.task, task_list=share_tasks)
-    replay_iter_share = iter(replay_loader_share)     # run OfflineReplayBuffer.sample function
+    if len(share_tasks)>0:
+        replay_loader_share = make_replay_loader(env, replay_dir_list_share, cfg.replay_buffer_size,
+                    cfg.batch_size // 2 * 10, cfg.replay_buffer_num_workers, cfg.discount,  # batch size是10倍，后取top10
+                    main_task=cfg.task, task_list=share_tasks)
+        replay_iter_share = iter(replay_loader_share)     # run OfflineReplayBuffer.sample function
+    else:
+        replay_loader_share = None
+        replay_iter_share = None
     print("load data done.")
 
     # create video recorders
-    video_recorder = VideoRecorder(work_dir if cfg.save_video else None)
+    # video_recorder = VideoRecorder(work_dir if cfg.save_video else None)
 
     timer = utils.Timer()
     global_step = 0
@@ -139,7 +143,7 @@ def main(cfg: DictConfig):
         # try to evaluate
         if eval_every_step(global_step):
             logger.log('eval_total_time', timer.total_time(), global_step)
-            reward = eval(global_step, agent, env, logger, cfg.num_eval_episodes, video_recorder)
+            reward = eval(global_step, agent, env, logger, cfg.num_eval_episodes,) #video_recorder)
             if reward > best_reward:
                 best_reward = reward
                 agent.save(work_dir)

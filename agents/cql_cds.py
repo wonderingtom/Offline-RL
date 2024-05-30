@@ -76,8 +76,8 @@ class Critic(nn.Module):
         self.delta_z = (v_max - v_min) / (atom_dim - 1)
         self.v_min = v_min
         self.v_max = v_max
-        self.q1 = C51Q_network(obs_dim, action_dim, hidden_dim, atom_dim, self.support)
-        self.q2 = C51Q_network(obs_dim, action_dim, hidden_dim, atom_dim, self.support)
+        self.q1 = C51Q_network(obs_dim, action_dim, hidden_dim, atom_dim, self.support, self.device)
+        self.q2 = C51Q_network(obs_dim, action_dim, hidden_dim, atom_dim, self.support, self.device)
         
     def forward(self, obs, action):
         obs_action = torch.cat([obs, action], dim=-1)
@@ -149,8 +149,8 @@ class CDSAgent(Agent):
 
         # models
         self.actor = Actor(state_dim, action_dim, hidden_dim).to(device)
-        self.critic = Critic(state_dim, action_dim, hidden_dim).to(device)
-        self.critic_target = Critic(state_dim, action_dim, hidden_dim).to(device)
+        self.critic = Critic(state_dim, action_dim, hidden_dim,device=device)
+        self.critic_target = Critic(state_dim, action_dim, hidden_dim,device=device)
         self.critic_target.load_state_dict(self.critic.state_dict())
 
         # lagrange multipliers
@@ -355,20 +355,21 @@ class CDSAgent(Agent):
         # 2. sample examples from other tasks
         # sample 10 times samples, and select the top-0.1 samples.   (batch_size_split*10, xx, xx)
         # shape = (5120, 24) (5120, 6) (5120, 1) (5120, 1) (5120, 24)
-        obs, action, reward, discount, next_obs, _ = utils.to_torch(batch_share, self.device)
-        # print("obs:", obs.shape, action.shape, reward.shape, discount.shape, next_obs.shape)
-        # calculate the conservative Q value
-        with torch.no_grad():
-            conservative_q_value, _ = self.critic(obs, action)          # (5120, 1)
-        conservative_q_value = conservative_q_value.squeeze().detach().cpu().numpy()
-        # choose the top 0.1  top_index.shape=(512,)
-        top_index = np.argpartition(conservative_q_value, -obs_m.shape[0])[-obs_m.shape[0]:]  # find the top 0.1 index. (batch_size_split,)
-        # extract the samples
-        obs_all.append(obs[top_index])
-        action_all.append(action[top_index])
-        next_obs_all.append(next_obs[top_index])
-        reward_all.append(reward[top_index])
-        discount_all.append(discount[top_index])
+        if batch_share is not None:
+            obs, action, reward, discount, next_obs, _ = utils.to_torch(batch_share, self.device)
+            # print("obs:", obs.shape, action.shape, reward.shape, discount.shape, next_obs.shape)
+            # calculate the conservative Q value
+            with torch.no_grad():
+                conservative_q_value, _ = self.critic(obs, action)          # (5120, 1)
+            conservative_q_value = conservative_q_value.squeeze().detach().cpu().numpy()
+            # choose the top 0.1  top_index.shape=(512,)
+            top_index = np.argpartition(conservative_q_value, -obs_m.shape[0])[-obs_m.shape[0]:]  # find the top 0.1 index. (batch_size_split,)
+            # extract the samples
+            obs_all.append(obs[top_index])
+            action_all.append(action[top_index])
+            next_obs_all.append(next_obs[top_index])
+            reward_all.append(reward[top_index])
+            discount_all.append(discount[top_index])
 
         return torch.cat(obs_all, dim=0), torch.cat(action_all, dim=0), torch.cat(reward_all, dim=0), \
             torch.cat(discount_all, dim=0), torch.cat(next_obs_all, dim=0)
@@ -377,7 +378,10 @@ class CDSAgent(Agent):
         metrics = dict()
 
         batch_main = next(replay_iter_main)  # len=6, inner_shape=512x24
-        batch_share = next(replay_iter_share)
+        if replay_iter_share is not None:
+            batch_share = next(replay_iter_share)
+        else:
+            batch_share = None
 
         # print("conservative data sharing...")   # obs.shape=(1024, 24), action.shape=(1024, 6) reward.shape=(1024, 1)
         obs, action, reward, discount, next_obs = self.conservative_data_share(batch_main, batch_share)

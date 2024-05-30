@@ -59,7 +59,7 @@ class MetersGroup(object):
         with self._csv_file_name.open('r') as f:
             reader = csv.DictReader(f)
             for row in reader:
-                if float(row['episode']) >= data['episode']:
+                if float(row['episode_length']) >= data['episode_length']:
                     break
                 rows.append(row)
         with self._csv_file_name.open('w') as f:
