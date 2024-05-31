@@ -1,0 +1,41 @@
+agent:
+  _target_: agents.cql_cds.CDSAgent
+  name: cql_cds
+  obs_shape: 24
+  action_shape: 6
+  device: ${device}
+  actor_lr: 0.0001
+  critic_lr: 0.0003
+  critic_target_tau: 0.01
+  n_samples: 3
+  use_critic_lagrange: false
+  alpha: 50
+  target_cql_penalty: 5.0
+  use_tb: true
+  hidden_dim: 256
+  nstep: 1
+  batch_size: 1024
+  has_next_action: false
+  num_expl_steps: 100
+task: walker_walk
+share_task:
+- walker_walk
+- walker_run
+data_type:
+- medium
+- medium-replay
+discount: 0.99
+num_grad_steps: 100000
+log_every_steps: 1000
+eval_every_steps: 1000
+num_eval_episodes: 10
+replay_buffer_dir: collected_data
+replay_buffer_size: 10000000
+replay_buffer_num_workers: 1
+batch_size: ${agent.batch_size}
+seed: 42
+device: cuda
+save_video: false
+use_tb: true
+data_main: expert
+wandb: false

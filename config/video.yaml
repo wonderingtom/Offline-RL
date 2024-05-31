@@ -1,0 +1,11 @@
+defaults:
+  - agent: mmd_cds                               # c51_cds, mmd_cdsz
+
+task: walker_walk
+seed: 42
+device: cuda:0
+num_eval_episodes: 10
+
+hydra:
+  run:
+    dir: ./mmd_cds
