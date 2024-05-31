@@ -1,4 +1,4 @@
-name: utds
+name: rl
 channels:
   - defaults
 dependencies:
@@ -9,10 +9,6 @@ dependencies:
   - pyparsing=2.4.7
   - jupyterlab=3.0.14
   - scikit-image=0.18.1
-  - nvidia::cudatoolkit=11.1
-  - pytorch::pytorch
-  - pytorch::torchvision
-  - pytorch::torchaudio
   - pip:
     - termcolor==1.1.0
     - git+git://github.com/deepmind/dm_control.git

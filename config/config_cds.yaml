@@ -1,5 +1,5 @@
 defaults:
-  - agent: cql_cds                               # cql_cds, cql_cdsz
+  - agent: mmd_cds                               # c51_cds, mmd_cds
   # - override hydra/launcher: submitit_local
 
 # unsupervised exploration
@@ -24,7 +24,7 @@ batch_size: ${agent.batch_size}
 # misc
 seed: 42
 device: cuda
-save_video: True
+save_video: False
 use_tb: True
 
 # used for train_offline_single
